@@ -1,0 +1,3 @@
+title=Dice Reader
+author=Daniel Davis
+orientation=portrait
