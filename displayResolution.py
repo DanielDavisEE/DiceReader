@@ -29,8 +29,8 @@ class MainApp(App):
         #texture = Texture.create(size=(640, 480), colorfmt='rgb')
         
         cap = cv2.VideoCapture(0)  # Open the first camera connected to the computer.
-        
         ret, frame = cap.read()  # Read an image from the frame.   
+        
         return Button(text=f'{len(frame)} x {len(frame[0])}')
     '''
         # Release the camera device and close the GUI.

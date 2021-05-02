@@ -1,17 +1,14 @@
-# Calibrate camera
-
-# Find dice in image
-
-# Identify type of dice
-
-# Reorientate and crop dice image
-
-# Read value from dice
+__version__ = "0.0.2"
 
 import cv2
 import numpy as np
 
+import kivy
+#kivy.require('2.0.0')
+
 from kivy.app import App
+from kivy.uix.button import Button
+
 from kivy.uix.widget import Widget
 from kivy.clock import Clock
 
@@ -24,7 +21,7 @@ from kivy.properties import *
 
 from array import array
 
-
+"""
 class CameraWidget(Widget):
     
     img_frame = ObjectProperty(force_dispatch=True)
@@ -181,23 +178,28 @@ class CameraWidget(Widget):
             
     def close_camera(self):
         self.cap.release()
-    
+ """   
 
 
 class MainApp(App):
     
     def build(self):
-        self.widget_inst = CameraWidget()
         
-        Clock.schedule_interval(self.widget_inst.capture_frame, 1/10)
+        cap = cv2.VideoCapture(0)  # Open the first camera connected to the computer.
+        ret, frame = cap.read()  # Read an image from the frame.   
         
-        return self.widget_inst
+        return Button(text=f'{len(frame)} x {len(frame[0])}')        
+        #self.widget_inst = CameraWidget()
+        
+        #Clock.schedule_interval(self.widget_inst.capture_frame, 1/10)
+        
+        #return self.widget_inst
     
-    def close_app(self):
-        self.widget_inst.close_camera()
+    #def close_app(self):
+        #self.widget_inst.close_camera()
         
 
 if __name__ == "__main__":
     app_inst = MainApp()
     app_inst.run()
-    app_inst.close_app()
+    #app_inst.close_app()
