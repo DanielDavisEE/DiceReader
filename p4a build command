@@ -1,0 +1,1 @@
+p4a apk --private $HOME/Documents/Code/DiceReader/ --package=com.danieldavis.dicereader --name "DiceReader" --version 0.1 --bootstrap=sdl2 --requirements=python3==3.7.1,hostpython==3.7.1,kivy,numpy,opencv

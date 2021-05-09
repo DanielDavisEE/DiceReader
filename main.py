@@ -1,7 +1,7 @@
 __version__ = "0.0.2"
 
-import cv2
-import numpy as np
+#import cv2
+#import numpy as np
 
 import kivy
 #kivy.require('2.0.0')
@@ -9,17 +9,17 @@ import kivy
 from kivy.app import App
 from kivy.uix.button import Button
 
-from kivy.uix.widget import Widget
-from kivy.clock import Clock
+#from kivy.uix.widget import Widget
+#from kivy.clock import Clock
 
-from kivy.uix.image import Image
-from kivy.core.window import Window
-from kivy.graphics.texture import Texture
-from kivy.graphics import Rectangle
-from kivy.uix.image import Image
-from kivy.properties import *
+#from kivy.uix.image import Image
+#from kivy.core.window import Window
+#from kivy.graphics.texture import Texture
+#from kivy.graphics import Rectangle
+#from kivy.uix.image import Image
+#from kivy.properties import *
 
-from array import array
+#from array import array
 
 """
 class CameraWidget(Widget):
@@ -184,11 +184,11 @@ class CameraWidget(Widget):
 class MainApp(App):
     
     def build(self):
+        return Button(text='hello world')
+        #cap = cv2.VideoCapture(0)  # Open the first camera connected to the computer.
+        #ret, frame = cap.read()  # Read an image from the frame.   
         
-        cap = cv2.VideoCapture(0)  # Open the first camera connected to the computer.
-        ret, frame = cap.read()  # Read an image from the frame.   
-        
-        return Button(text=f'{len(frame)} x {len(frame[0])}')        
+        #return Button(text=f'{len(frame)} x {len(frame[0])}')        
         #self.widget_inst = CameraWidget()
         
         #Clock.schedule_interval(self.widget_inst.capture_frame, 1/10)
