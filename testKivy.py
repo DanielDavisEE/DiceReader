@@ -73,7 +73,7 @@ def k_means_dice(frame, setting):
         setting = 1
     
     max_dice = 20
-    dice_count = 6#min(setting, max_dice)
+    dice_count = min(setting, max_dice)
 
     blur = cv2.GaussianBlur(frame, (9,9), 0)
     
@@ -209,7 +209,7 @@ def kalman_update(sensors):
     
 
 def process(frame, setting):
-    global image_count, path, old_frame, dice_position, save_count
+    global image_count, path, old_frame, dice_position, record_training_images
     #frame = cv2.resize(frame, (200, 200))
     
     image_processed = frame.copy() 
@@ -223,33 +223,30 @@ def process(frame, setting):
     
     kalman_update(centres)
     
-    for centre in dice_position:
-        cv2.circle(image_processed, (int(centre[1]), int(centre[0])), 5, (centre[2] * 25, 0, max(100, 255 - centre[2] * 100)), -1)
+    # Draw dice centres
+    #for centre in dice_position:
+        #cv2.circle(image_processed, (int(centre[1]), int(centre[0])), 5, (centre[2] * 25, 0, max(100, 255 - centre[2] * 100)), -1)
     
-    image_processed = cv2.drawContours(image_processed, list(hull_dict.values()), -1, (0, 255, 0), 1)
+    # Draw convex hulls
+    #image_processed = cv2.drawContours(image_processed, list(hull_dict.values()), -1, (0, 255, 0), 1)
     
-    if save_count < 25:
-        save_count += 1
-        return image_processed
-    
-    print(len(hull_dict))
     for _, hull in hull_dict.items():
         
-        
-        mask = cv2.drawContours(np.zeros_like(frame), [hull], -1, 255, -1)
-        mask_inv = cv2.bitwise_not(mask)
-        
+        # Mask dice out of picture
+        #mask = cv2.drawContours(np.zeros_like(frame), [hull], -1, 255, -1)
+        #mask_inv = cv2.bitwise_not(mask)
         #image_processed = cv2.bitwise_and(image_processed, image_processed, mask=mask_inv)
         #image_processed = cv2.add(image_processed, cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)//2)
         
         rect = cv2.minAreaRect(hull)
+        rect = (rect[0], (max(rect[1]), max(rect[1])), rect[2])
+        
         box = cv2.boxPoints(rect)
         box = np.int0(box)
         
         # get width and height of the detected rectangle
         width = int(rect[1][0])
         height = int(rect[1][1])
-        width = height = max(width, height)
     
         src_pts = box.astype("float32")
         # coordinate of the points in box points after the rectangle has been
@@ -266,11 +263,31 @@ def process(frame, setting):
         warped = cv2.warpPerspective(frame, M, (width, height))
         warped = cv2.resize(warped, (50, 50))
         
-        cv2.imwrite(f'{path}\\{image_count}.jpg', warped)
-        
-        image_count += 1
+        if record_training_images:
+            cv2.imwrite(f'{path}\\{image_count}.jpg', warped)
+            image_count += 1
+        else:
+            # Predict outcomes
+            blob = cv2.dnn.blobFromImage(cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY), 1, (50, 50))
+            
+            net.setInput(blob)
+            preds = net.forward()
+            
+            pred_classes = np.argsort(preds[0])[::-1] + 1
+            
+            green = (0, 255, 0)
+            cv2.drawContours(image_processed,[box],0,green,2)
+            
+            # font
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            # fontScale
+            fontScale = 1            
+            
+            origin = int(rect[0][0]), int(rect[0][1])
+            image_processed = cv2.putText(image_processed, str(pred_classes[0]), origin, font, 
+                                          fontScale, green, thickness=3)            
+            
     
-    save_count = 0
     return image_processed
     
     ## convert the grayscale image to binary image
@@ -292,22 +309,33 @@ def process(frame, setting):
         
     #return image_processed
 
-count = -1
-for child in os.listdir():
-    if os.path.isdir(child):
-        count += 1
+record_training_images = False
 
-path = f'image_folder_{count}'
-  
-os.mkdir(path)
-image_count = 0
+if record_training_images:
+    dice_type = 'd6'#f'image_folder_{count}'
+    face = '1'
+    path = f"{dice_type}\\{face}"
+    
+    try:
+        os.mkdir(dice_type)
+    except FileExistsError:
+        pass
+    
+    try:
+        os.mkdir(path)
+    except FileExistsError:
+        pass
+    
+    image_count = max([int(x.removesuffix('.jpg')) for x in os.listdir(path)]) + 1
+else:
+    net = cv2.dnn.readNetFromTensorflow(f'frozen_models\\frozen_graph.pb')
 
 cap = cv2.VideoCapture(0)
 _, old_frame = cap.read()
 
 cv2.namedWindow('Test')
 
-cv2.createTrackbar('Threshold', 'Test', 1, 10, nothing)
+cv2.createTrackbar('Threshold', 'Test', 1, 6, nothing)
 
 while True:
     _, img_original = cap.read()
