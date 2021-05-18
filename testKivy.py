@@ -6,6 +6,7 @@ import os
 https://docs.opencv.org/3.4/dd/d49/tutorial_py_contour_features.html
 '''
 
+dice_count = None
 dice_position = np.ones((0, 3), dtype='float32')
 sensor_variance = 0
 save_count = 0
@@ -14,34 +15,6 @@ def nothing(x):
     # We need a callback for the createTrackbar function.
     # It doesn't need to do anything, however.
     pass
-
-#def find_dice(contours, grey_image):
-    #contour_areas = np.zeros(len(contours))
-    ##mask = np.full(len(contours), True)
-    
-    #for i, c in enumerate(contours):
-        #contour_areas[i] = cv2.contourArea(c)
-    
-    #median_area = np.median(contour_areas)
-    #total_area = sum(contour_areas)
-    #max_dice = 20
-    
-    #dice_count = min(int(total_area / median_area), max_dice)
-    
-    #mask = np.zeros(grey_image.shape, np.uint8)
-    #cv2.drawContours(mask, contours, -1, 255, -1)
-    #pixelpoints = np.transpose(np.nonzero(mask)).astype("float32")
-    #pixelpoints = np.flip(pixelpoints, 1)
-    
-    ##contour_points = np.concatenate(contours).reshape((-1, 2)).astype("float32")
-    #criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
-                #10, 1.0)
-    #flags = cv2.KMEANS_RANDOM_centres    
-    #compactness, labels, centres = cv2.kmeans(pixelpoints,
-                                              #dice_count, None, criteria,
-                                              #10, flags)
-    
-    #return centres.astype("int32")
 
 def reduce_colours(image, K):
     """Not in use
@@ -65,34 +38,17 @@ def reduce_colours(image, K):
     
     return image_processed
 
-def k_means_dice(frame, setting):
-    """ With a given number of dice in the image, attempt to find the dice centroids and convex hulls
+def k_means_dice(pixelpoints):
+    """ With a given number of dice in the image, attempt to find the dice centres using kmeans clustering
     """
+    K = int(round(dice_count))
+    if pixelpoints.size == 0 or K  == 0:
+        return np.zeros((0, 2), dtype=np.float32)
     
-    if setting <= 0:
-        setting = 1
-    
-    max_dice = 20
-    dice_count = min(setting, max_dice)
-
-    blur = cv2.GaussianBlur(frame, (9,9), 0)
-    
-    threshold = 100
-    # convert the image to grayscale
-    grey_image = cv2.cvtColor(blur, cv2.COLOR_BGR2GRAY)
-    pixelpoints = np.zeros((0, 2))
-    
-    while pixelpoints.size == 0:
-        ret, thresh = cv2.threshold(grey_image, threshold, 255, cv2.THRESH_BINARY_INV)       
-    
-        pixelpoints = np.transpose(np.nonzero(thresh)).astype(np.float32)
-        threshold += 20
-    
-    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
-                100, 1.0)
-    
-    if dice_position.shape[0] >= dice_count and all(dice_position[:dice_count, 2] < 0.4):
-        centres = dice_position[:dice_count, :2].astype(np.float32)
+    # If the appropriate number of dice positions exist with a low variance, use them as the start
+    #     points for the kmeans algorithm. Use knn algorithm to determine best labels
+    if dice_position.shape[0] >= K and all(dice_position[:K, 2] < 0.4):
+        centres = dice_position[:K, :2].astype(np.float32)
         
         knn = cv2.ml.KNearest_create()
         
@@ -110,58 +66,91 @@ def k_means_dice(frame, setting):
         centres = None
         attempts = 10
         flags = cv2.KMEANS_RANDOM_CENTERS
-        
+    
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
+                100, 1.0)
+    
     compactness, labels, centres = cv2.kmeans(data=pixelpoints,
-                                              K=dice_count,
+                                              K=K,
                                               bestLabels=bestLabels,
                                               criteria=criteria,
                                               attempts=attempts,
                                               flags=flags,
-                                              centers=centres)    
-
-    a = labels[:100]
-    b = np.unique(labels)
-    c = labels.shape
-    d = pixelpoints.shape
+                                              centers=centres)
     
-    pixelpoints = pixelpoints.astype('uint32')
+    assert centres.shape[1] == 2
+    
+    return centres
+
+
+def find_dice_hulls(pixelpoints, frame_size, labels=None):
+    """ Using the dice centres from the kalman posterior values and either a set of cluster labels or a
+        thresholded image, find the convex hulls for each dice.
+    """
+    if dice_position.size == 0 or pixelpoints.size == 0:
+        return {}
+    
+    centres = dice_position[:int(round(dice_count)), :2].astype(np.float32)
+    
+    if labels is None:
+        
+        knn = cv2.ml.KNearest_create()
+        
+        responses = np.arange(centres.shape[0])
+        
+        knn.train(centres, cv2.ml.ROW_SAMPLE, responses)
+        ret, results, neighbours, dist = knn.findNearest(pixelpoints, 1)
+        labels = results.astype(np.int32)
+    
+    
+    pixelpoints = pixelpoints.astype(np.int32)
+    
     hull_dict = {i: None for i in range(centres.shape[0])}
     for i in range(centres.shape[0]):
         # The locations of the pixels in group i
         tmp = pixelpoints[np.nonzero(labels == i)[0], :]
         
-        mask = np.zeros_like(thresh)
+        mask = np.zeros((frame_size[0], frame_size[1]), dtype=np.uint8)
         # Set all pixels in group i to white
         mask[tmp[:, 0], tmp[:, 1]] = 255
         
         contours, hierarchy = cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        hull_dict[i] = cv2.convexHull(np.concatenate(contours))
-    
-    return hull_dict, centres
+        
+        if contours:
+            hull_dict[i] = cv2.convexHull(np.concatenate(contours))
+        else:
+            del hull_dict[i]
+        
+    return hull_dict
 
 
-def motion_model(frame):
-    global old_frame, dice_position
+def motion_model(grey_image):
+    """ Using optical flow as a motion model, update the estimated dice centres through dead reckoning.
+    """
+    global old_grey_image, dice_position
     
-    old_gray = cv2.cvtColor(old_frame, cv2.COLOR_BGR2GRAY)
-    frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    
-    # Parameters for lucas kanade optical flow
-    lk_params = dict( winSize  = (15,15),
-                      maxLevel = 2,
-                      criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
-    
-    dice_centres = dice_position[:, 0:2]
-    dice_centres = np.flip(dice_centres, 1)
-    
-    # Update dice positions with motion model guess
-    dice_centres_new, st, err = cv2.calcOpticalFlowPyrLK(old_gray, frame_gray, dice_centres, None, **lk_params)
-    dice_position[:, 0:2] = np.flip(dice_centres_new, 1)
+    if dice_position.size > 0:
+        # Parameters for lucas kanade optical flow
+        lk_params = dict( winSize  = (15,15),
+                          maxLevel = 2,
+                          criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+        
+        dice_centres = dice_position[:, 0:2]
+        dice_centres = np.flip(dice_centres, 1)
+        
+        # Update dice positions with motion model guess
+        dice_centres_new, st, err = cv2.calcOpticalFlowPyrLK(old_grey_image, grey_image, dice_centres, None, **lk_params)
+        dice_position[:, 0:2] = np.flip(dice_centres_new, 1)
+        
     dice_position[:, 2] *= 1.1
     
-    old_frame = frame.copy()
+    old_grey_image = grey_image.copy()
+
 
 def kalman_update(sensors):
+    """ Update the Kalman filters with the position estimations from the kmeans clustering.
+    """
+    
     global dice_position
     
     if sensors.size == 0:
@@ -206,114 +195,175 @@ def kalman_update(sensors):
             dice_position = np.delete(dice_position, i, axis=0)
             
     dice_position = dice_position[dice_position[:, 2].argsort()]
+
+
+def extract_dice_image(frame, hull, size=(50, 50)):
+    rect = cv2.minAreaRect(hull)
+    rect = (rect[0], (max(rect[1]), max(rect[1])), rect[2])
+    
+    box = cv2.boxPoints(rect)
+    box = np.int0(box)
+    
+    # get width and height of the detected rectangle
+    width = int(rect[1][0])
+    height = int(rect[1][1])
+
+    src_pts = box.astype("float32")
+    # coordinate of the points in box points after the rectangle has been
+    # straightened
+    dst_pts = np.array([[0, height-1],
+                        [0, 0],
+                        [width-1, 0],
+                        [width-1, height-1]], dtype="float32")
+
+    # the perspective transformation matrix
+    M = cv2.getPerspectiveTransform(src_pts, dst_pts)
+
+    # directly warp the rotated rectangle to get the straightened rectangle
+    warped = cv2.warpPerspective(frame, M, (width, height))
+    return (int(rect[0][0]), int(rect[0][1])), box, cv2.resize(warped, (50, 50))
+    
+
+def find_blobs(im):
+    # Setup SimpleBlobDetector parameters.
+    params = cv2.SimpleBlobDetector_Params()
+    
+    ## Change thresholds
+    #params.minThreshold = 10;
+    #params.maxThreshold = 200;
+    
+    # Filter by Area.
+    params.filterByArea = True
+    params.minArea = 1500
+    params.maxArea = 50000
+    
+    ## Filter by Circularity
+    #params.filterByCircularity = True
+    #params.minCircularity = 0.1
+    
+    ## Filter by Convexity
+    #params.filterByConvexity = True
+    #params.minConvexity = 0.87
+    
+    ## Filter by Inertia
+    #params.filterByInertia = True
+    #params.minInertiaRatio = 0.01
+    
+    # Create a detector with the parameters
+    detector = cv2.SimpleBlobDetector_create(params)
+    
+    # Detect blobs.
+    return detector.detect(im)
+
+
+def find_dice_count(grey_image, thresh):
+    global dice_count
+
+    contours, hierarchy = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    total_area = sum([cv2.contourArea(cnt) for cnt in contours])
+    
+    adjustment_factor = 0.85 # Compensate for the tendency for the contours to give lower
+                             #   areas than the circular blobs
+    areas = [(kp.size/2)**2 * np.pi for kp in find_blobs(grey_image)]
+    if areas:
+        average_dice_size = np.average(areas) * adjustment_factor
+    else:
+        average_dice_size = total_area
+        
+    average_dice_size = min(average_dice_size, # Prevent dice number edge cases:
+                            total_area)        #   Impossible to have between 0 and 1 dice
+    
+    new_dice_count = total_area / max(1, average_dice_size)
+    if dice_count is None:
+        dice_count = new_dice_count
+    else:
+        K = min(0.1 + 0.1 * abs(new_dice_count - dice_count), 0.5)
+        dice_count = K * new_dice_count + (1 - K) * dice_count
     
 
 def process(frame, setting):
     global image_count, path, old_frame, dice_position, record_training_images
-    #frame = cv2.resize(frame, (200, 200))
     
-    image_processed = frame.copy() 
     
-    hull_dict, centres = k_means_dice(frame, setting)
+    image_processed = frame.copy()
+    
+    # Preprocess image
+    blur = cv2.GaussianBlur(frame, (9,9), 0)
+    
+    # convert the image to grayscale
+    grey_image = cv2.cvtColor(blur, cv2.COLOR_BGR2GRAY)
+    
+    ret, thresh = cv2.threshold(grey_image, 0, 255, cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)
+    kernel = np.ones((11, 11), dtype='uint8')
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+    
+    pixelpoints = np.transpose(np.nonzero(thresh)).astype(np.float32)
+        
+    find_dice_count(grey_image, thresh)
+    
+    #new_image = cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)
+
+    #contours, hierarchy = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    #cv2.drawContours(new_image,contours,-1,(0, 255, 0),2)
+    
+    #keypoints = find_blobs(grey_image)
+    #new_image = cv2.drawKeypoints(new_image, keypoints, np.array([]), (0,0,255), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+    #for kp in keypoints:
+        #new_image = cv2.putText(new_image, str(int(kp.size)), tuple([int(x) for x in kp.pt]), cv2.FONT_HERSHEY_SIMPLEX, 
+                                      #1, (0, 0, 255), thickness=2)
+    #new_image = cv2.putText(new_image, str(dice_count), (0, 25), cv2.FONT_HERSHEY_SIMPLEX, 
+                            #1, (0, 255, 0), thickness=2)
+    
+    centres = k_means_dice(pixelpoints)
     
     if dice_position.shape[0] == 0:
         dice_position = np.concatenate((centres, np.ones((centres.shape[0], 1))), axis=1).astype('float32')
     
-    motion_model(image_processed)
+    motion_model(grey_image)
     
     kalman_update(centres)
     
-    # Draw dice centres
-    #for centre in dice_position:
-        #cv2.circle(image_processed, (int(centre[1]), int(centre[0])), 5, (centre[2] * 25, 0, max(100, 255 - centre[2] * 100)), -1)
-    
-    # Draw convex hulls
-    #image_processed = cv2.drawContours(image_processed, list(hull_dict.values()), -1, (0, 255, 0), 1)
+    hull_dict = find_dice_hulls(pixelpoints, frame.shape)
     
     for _, hull in hull_dict.items():
         
-        # Mask dice out of picture
-        #mask = cv2.drawContours(np.zeros_like(frame), [hull], -1, 255, -1)
-        #mask_inv = cv2.bitwise_not(mask)
-        #image_processed = cv2.bitwise_and(image_processed, image_processed, mask=mask_inv)
-        #image_processed = cv2.add(image_processed, cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)//2)
+        hull_centre, hull_bbox, dice_image = extract_dice_image(image_processed, hull)
         
-        rect = cv2.minAreaRect(hull)
-        rect = (rect[0], (max(rect[1]), max(rect[1])), rect[2])
-        
-        box = cv2.boxPoints(rect)
-        box = np.int0(box)
-        
-        # get width and height of the detected rectangle
-        width = int(rect[1][0])
-        height = int(rect[1][1])
-    
-        src_pts = box.astype("float32")
-        # coordinate of the points in box points after the rectangle has been
-        # straightened
-        dst_pts = np.array([[0, height-1],
-                            [0, 0],
-                            [width-1, 0],
-                            [width-1, height-1]], dtype="float32")
-    
-        # the perspective transformation matrix
-        M = cv2.getPerspectiveTransform(src_pts, dst_pts)
-    
-        # directly warp the rotated rectangle to get the straightened rectangle
-        warped = cv2.warpPerspective(frame, M, (width, height))
-        warped = cv2.resize(warped, (50, 50))
+        # Draw bounding box around dice
+        green = (0, 255, 0)
+        cv2.drawContours(image_processed,[hull_bbox],0,green,2)
         
         if record_training_images:
-            cv2.imwrite(f'{path}\\{image_count}.jpg', warped)
+            cv2.imwrite(f'{path}\\{image_count}.jpg', dice_image)
             image_count += 1
         else:
             # Predict outcomes
-            blob = cv2.dnn.blobFromImage(cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY), 1, (50, 50))
+            blob = cv2.dnn.blobFromImage(cv2.cvtColor(dice_image, cv2.COLOR_BGR2GRAY), 1, (50, 50))
             
             net.setInput(blob)
             preds = net.forward()
             
             pred_classes = np.argsort(preds[0])[::-1] + 1
             
-            green = (0, 255, 0)
-            cv2.drawContours(image_processed,[box],0,green,2)
-            
             # font
             font = cv2.FONT_HERSHEY_SIMPLEX
             # fontScale
             fontScale = 1            
             
-            origin = int(rect[0][0]), int(rect[0][1])
-            image_processed = cv2.putText(image_processed, str(pred_classes[0]), origin, font, 
+            image_processed = cv2.putText(image_processed, str(pred_classes[0]), hull_centre, font, 
                                           fontScale, green, thickness=3)            
             
-    
+        
+    image_processed = cv2.putText(image_processed, str(dice_count), (0, 25), cv2.FONT_HERSHEY_SIMPLEX, 
+                                  1, (0, 255, 0), thickness=2)    
     return image_processed
-    
-    ## convert the grayscale image to binary image
-    #ret, thresh = cv2.threshold(grey_image, 100, 255, 0)
 
-    ## find contours in the binary image
-    #contours, hierarchy = cv2.findContours(thresh, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-    #contours = sorted(contours, key=cv2.contourArea, reverse=True)[1:]
-    
-    #min_contour_area = 500
-    #contours = [c for c in contours if cv2.contourArea(c) > min_contour_area]
-    
-    #cv2.drawContours(image_processed, contours, -1, (0,255,0), thickness=1)#, hierarchy=hierarchy, maxLevel=1)
-    #if len(contours):
-        #dice_centres = find_dice(contours, grey_image)
-        
-        #for centre in dice_centres:
-            #cv2.circle(image_processed, tuple(centre), 5, (0, 0, 255), -1)
-        
-    #return image_processed
 
 record_training_images = False
 
 if record_training_images:
     dice_type = 'd6'#f'image_folder_{count}'
-    face = '1'
+    face = '6'
     path = f"{dice_type}\\{face}"
     
     try:
@@ -333,6 +383,10 @@ else:
 cap = cv2.VideoCapture(0)
 _, old_frame = cap.read()
 
+# Preprocess image
+blur = cv2.GaussianBlur(old_frame, (9,9), 0)
+old_grey_image = cv2.cvtColor(blur, cv2.COLOR_BGR2GRAY)
+
 cv2.namedWindow('Test')
 
 cv2.createTrackbar('Threshold', 'Test', 1, 6, nothing)
@@ -341,13 +395,14 @@ while True:
     _, img_original = cap.read()
     
     setting = cv2.getTrackbarPos('Threshold', 'Test')
-    
-    #img_original = cv2.imread("5 dice NO Broken.png")
+
+    if setting <= 0:
+        setting = 1    
     
     image_processed = process(img_original, setting)
     cv2.imshow('Test', image_processed)
 
     if cv2.waitKey(100) & 0xFF == ord('q'):
         cv2.destroyAllWindows()
-        #cap.release()
+        cap.release()
         break
