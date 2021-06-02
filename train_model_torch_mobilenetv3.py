@@ -38,23 +38,24 @@ class DiceDataset(torch.utils.data.Dataset):
                                 self.files_loc[idx][0],
                                 self.files_loc[idx][1])
         image = cv2.imread(img_name)
-        image_grey = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        image = np.swapaxes(image, 0, 2)
+        #image_grey = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         
         # Data Normalization
         # Conversion to float
-        image_grey = image_grey.astype(np.float32) 
+        image = image.astype(np.float32) 
         
         # Normalization
-        image_grey = image_grey/255.0
+        image = image/255.0
         
-        image_grey = torch.tensor(image_grey)
+        image = torch.tensor(image)
         
         #sample = {'image': image_grey, 'label': self.files_loc[idx][0]}
 
         if self.transform:
             sample = self.transform(sample)
         
-        return image_grey, self.files_loc[idx][0]
+        return image, int(self.files_loc[idx][0])-1
 
 #def run():
     #print('loop')
@@ -62,7 +63,7 @@ class DiceDataset(torch.utils.data.Dataset):
 #if __name__ == '__main__':
     #run()
 
-if False:
+if True:
     #dice_types = ['d6']
     
     ## Initialise dataset
@@ -103,7 +104,7 @@ if False:
     #test_images = test_images/255.0
     
     data_dir = 'd6'
-    image_datasets = {x: DiceDataset(os.path.join(x, data_dir))
+    image_datasets = {x: DiceDataset(os.path.join(data_dir, x))
                       for x in ['train', 'val']}
     dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=4,
                                                  shuffle=True, num_workers=0)
@@ -111,18 +112,31 @@ if False:
     dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
     class_names = list('123456')
 else:
+    #data_transforms = {
+        #'train': transforms.Compose([
+            #transforms.RandomResizedCrop(224),
+            #transforms.RandomHorizontalFlip(),
+            #transforms.ToTensor(),
+            #transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        #]),
+        #'val': transforms.Compose([
+            #transforms.Resize(256),
+            #transforms.CenterCrop(224),
+            #transforms.ToTensor(),
+            #transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        #]),
+    #}
     data_transforms = {
         'train': transforms.Compose([
-            transforms.RandomResizedCrop(224),
+            transforms.Resize(50),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+            transforms.Normalize([0, 0, 0], [255, 255, 255])
         ]),
         'val': transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
+            transforms.Resize(50),
             transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+            transforms.Normalize([0, 0, 0], [255, 255, 255])
         ]),
     }
     
@@ -229,4 +243,6 @@ optimizer_ft = optim.SGD(model_ft.parameters(), lr=0.001, momentum=0.9)
 exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=7, gamma=0.1)
 
 model_ft = train_model(model_ft, criterion, optimizer_ft, exp_lr_scheduler,
-                       num_epochs=2)
+                       num_epochs=1)
+
+torch.save(model_ft, 'tensor.pt')

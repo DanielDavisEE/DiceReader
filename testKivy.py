@@ -1,15 +1,15 @@
 import cv2
 import numpy as np
-from scipy import stats
-import os
+import os, time
+import matplotlib.pyplot as plt
 '''
 https://docs.opencv.org/3.4/dd/d49/tutorial_py_contour_features.html
 '''
 
+print(cv2.__version__)
+
 dice_count = None
 dice_position = np.ones((0, 3), dtype='float32')
-sensor_variance = 0
-save_count = 0
 
 def nothing(x):
     # We need a callback for the createTrackbar function.
@@ -87,7 +87,7 @@ def find_dice_hulls(pixelpoints, frame_size, labels=None):
     """ Using the dice centres from the kalman posterior values and either a set of cluster labels or a
         thresholded image, find the convex hulls for each dice.
     """
-    if dice_position.size == 0 or pixelpoints.size == 0:
+    if dice_position.size == 0 or pixelpoints.size == 0 or int(round(dice_count)) == 0:
         return {}
     
     centres = dice_position[:int(round(dice_count)), :2].astype(np.float32)
@@ -195,6 +195,9 @@ def kalman_update(sensors):
             dice_position = np.delete(dice_position, i, axis=0)
             
     dice_position = dice_position[dice_position[:, 2].argsort()]
+    
+    if dice_position.shape[0] > 40:
+        dice_position = dice_position[:min(round(dice_count * 2), 40), :]
 
 
 def extract_dice_image(frame, hull, size=(50, 50)):
@@ -262,7 +265,7 @@ def find_dice_count(grey_image, thresh):
     contours, hierarchy = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     total_area = sum([cv2.contourArea(cnt) for cnt in contours])
     
-    adjustment_factor = 0.85 # Compensate for the tendency for the contours to give lower
+    adjustment_factor = 0.92 # Compensate for the tendency for the contours to give lower
                              #   areas than the circular blobs
     areas = [(kp.size/2)**2 * np.pi for kp in find_blobs(grey_image)]
     if areas:
@@ -296,24 +299,26 @@ def process(frame, setting):
     ret, thresh = cv2.threshold(grey_image, 0, 255, cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)
     kernel = np.ones((11, 11), dtype='uint8')
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-    
-    pixelpoints = np.transpose(np.nonzero(thresh)).astype(np.float32)
         
     find_dice_count(grey_image, thresh)
     
-    #new_image = cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)
+    new_image = cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)
 
-    #contours, hierarchy = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    #cv2.drawContours(new_image,contours,-1,(0, 255, 0),2)
+    contours, hierarchy = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(new_image,contours,-1,(0, 255, 0),2)
     
-    #keypoints = find_blobs(grey_image)
-    #new_image = cv2.drawKeypoints(new_image, keypoints, np.array([]), (0,0,255), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+    keypoints = find_blobs(grey_image)
+    new_image = cv2.drawKeypoints(new_image, keypoints, np.array([]), (0,0,255), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
     #for kp in keypoints:
         #new_image = cv2.putText(new_image, str(int(kp.size)), tuple([int(x) for x in kp.pt]), cv2.FONT_HERSHEY_SIMPLEX, 
                                       #1, (0, 0, 255), thickness=2)
     #new_image = cv2.putText(new_image, str(dice_count), (0, 25), cv2.FONT_HERSHEY_SIMPLEX, 
                             #1, (0, 255, 0), thickness=2)
+                            
+    cv2.imwrite('Original.png', frame)
+    cv2.imwrite('Processing.png', new_image)
     
+    pixelpoints = np.transpose(np.nonzero(thresh)).astype(np.float32)
     centres = k_means_dice(pixelpoints)
     
     if dice_position.shape[0] == 0:
@@ -322,6 +327,12 @@ def process(frame, setting):
     motion_model(grey_image)
     
     kalman_update(centres)
+    
+    # Add location dots
+    #for y, x, var in dice_position:
+        #red = (0, 0, 255 - var * 40)
+        #cv2.circle(image_processed, (int(x), int(y)), 5, red, -1)
+    
     
     hull_dict = find_dice_hulls(pixelpoints, frame.shape)
     
@@ -351,11 +362,12 @@ def process(frame, setting):
             fontScale = 1            
             
             image_processed = cv2.putText(image_processed, str(pred_classes[0]), hull_centre, font, 
-                                          fontScale, green, thickness=3)            
+                                          fontScale, green, thickness=3)
             
         
-    image_processed = cv2.putText(image_processed, str(dice_count), (0, 25), cv2.FONT_HERSHEY_SIMPLEX, 
-                                  1, (0, 255, 0), thickness=2)    
+    #image_processed = cv2.putText(image_processed, str(dice_count), (0, 25), cv2.FONT_HERSHEY_SIMPLEX, 
+                                  #1, (0, 255, 0), thickness=2)
+    cv2.imwrite('Results.png', image_processed)
     return image_processed
 
 
@@ -380,7 +392,11 @@ if record_training_images:
 else:
     net = cv2.dnn.readNetFromTensorflow(f'frozen_models\\frozen_graph.pb')
 
+print('Opening Camera...')
 cap = cv2.VideoCapture(0)
+fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+out = cv2.VideoWriter('output.avi', fourcc, 20.0, (640, 480))
+print('Camera Open')
 _, old_frame = cap.read()
 
 # Preprocess image
@@ -391,18 +407,47 @@ cv2.namedWindow('Test')
 
 cv2.createTrackbar('Threshold', 'Test', 1, 6, nothing)
 
+time_list = []
+fps_list = []
+count_list = []
+filter_list = []
+
 while True:
     _, img_original = cap.read()
+    out.write(img_original)  # Write the frame to the output file.
     
     setting = cv2.getTrackbarPos('Threshold', 'Test')
 
     if setting <= 0:
         setting = 1    
-    
+    start_time = time.time()
     image_processed = process(img_original, setting)
+    end_time = time.time()
+    time_list.append(end_time - start_time)
+    fps = 1 / np.average((time_list[-1 * min(len(time_list), 3):]))
+    #fps_list.append(fps)
+    #count_list.append(dice_count)
+    #filter_list.append(dice_position.shape[0])
+    
+    image_processed = cv2.putText(image_processed, f"FPS: {fps:.2f}", (0, 25), cv2.FONT_HERSHEY_SIMPLEX, 
+                                  1, (0, 255, 0), thickness=2)
+    cv2.imwrite('FPS.png', image_processed)
     cv2.imshow('Test', image_processed)
 
     if cv2.waitKey(100) & 0xFF == ord('q'):
         cv2.destroyAllWindows()
         cap.release()
         break
+
+#plt.figure(1)
+#plt.plot(filter_list)
+#plt.plot(count_list)
+#plt.plot(fps_list)
+##plt.plot([6 for _ in range(len(filter_list))])
+#plt.legend(('Number of Kalman filters', 'Estimate number of dice', 'FPS', 'Number of dice'))
+#plt.show()
+
+#plt.figure(2)    
+#plt.plot(fps_list)
+#plt.show()
+

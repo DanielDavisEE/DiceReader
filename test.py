@@ -1,35 +1,78 @@
 import cv2
 import numpy as np
+import matplotlib.pyplot as plt
+
+img = cv2.imread('Picture1.jpg', cv2.IMREAD_GRAYSCALE)
+
+## global thresholding
+#ret1,th1 = cv2.threshold(img,127,255,cv2.THRESH_BINARY)
+## Otsu's thresholding
+#ret2,th2 = cv2.threshold(img,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+## Otsu's thresholding after Gaussian filtering
+#blur = cv2.GaussianBlur(img,(9,9),0)
+#ret3,th3 = cv2.threshold(blur,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+## plot all the images and their histograms
+#images = [img, 0, th1,
+          #img, 0, th2,
+          #blur, 0, th3]
+#titles = ['Original Noisy Image','Histogram','Global Thresholding (v=127)',
+          #'Original Noisy Image','Histogram',"Otsu's Thresholding",
+          #'Gaussian filtered Image','Histogram',"Otsu's Thresholding"]
+
+#plt.figure(0)
+#for i in range(3):
+    #plt.subplot(3,3,i*3+1),plt.imshow(images[i*3],'gray')
+    #plt.title(titles[i*3]), plt.xticks([]), plt.yticks([])
+    #plt.subplot(3,3,i*3+2),plt.hist(images[i*3].ravel(),256)
+    #plt.title(titles[i*3+1]), plt.xticks([]), plt.yticks([])
+    #plt.subplot(3,3,i*3+3),plt.imshow(images[i*3+2],'gray')
+    #plt.title(titles[i*3+2]), plt.xticks([]), plt.yticks([])
+#plt.show()
 
 
-def main():
+# global thresholding
+ret1,th1 = cv2.threshold(img,127,255,cv2.THRESH_BINARY_INV)
+# Otsu's thresholding
+ret2,th2 = cv2.threshold(img,0,255,cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)
+# Otsu's thresholding after Gaussian filtering
+#blur = cv2.GaussianBlur(img,(9,9),0)
+#ret3,th3 = cv2.threshold(blur,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
 
-    seed = 1
-    nclusters = 6
-    N = 100
-    
-    np.random.seed(seed) # Get always same random numpys
-    data = np.random.random(size=(N, 2)).astype(np.float32) * 100
-    centers = np.random.random(size=(nclusters, 2)).astype(np.float32) * 100
-    labels = np.random.randint(nclusters,
-                               size=(N, 1),
-                               dtype=np.int32)
+kernel = np.ones((11, 11), dtype='uint8')
+th3 = cv2.morphologyEx(th2, cv2.MORPH_CLOSE, kernel)
 
+# plot all the images and their histograms
+images = [img, th1, th2]
+titles = ['Original Image','Histogram','Global Thresholding (v=127)', "Otsu's Thresholding"]
 
-    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 1.0)
+plt.figure(0)
+plt.subplot(2, 2, 1),plt.imshow(images[0],'gray')
+plt.title(titles[0]), plt.xticks([]), plt.yticks([])
+plt.subplot(2, 2, 2),plt.hist(images[0].ravel(),256)
+plt.title(titles[1]), plt.xticks([]), plt.yticks([])
+plt.subplot(2, 2, 3),plt.imshow(images[1],'gray')
+plt.title(titles[2]), plt.xticks([]), plt.yticks([])
+plt.subplot(2, 2, 4),plt.imshow(images[2],'gray')
+plt.title(titles[3]), plt.xticks([]), plt.yticks([])
 
-    reshaped_data = data#np.reshape(data, data.shape[0] * data.shape[1])
-    reshaped_labels = labels#np.reshape(labels, (labels.shape[0] * labels.shape[1], 1))
+plt.show()
 
-    _, new_labels, center = cv2.kmeans(data=reshaped_data,
-                                       K=nclusters,
-                                       bestLabels=reshaped_labels,
-                                       criteria=criteria,
-                                       attempts=10,
-                                       flags=cv2.KMEANS_USE_INITIAL_LABELS,
-                                       centers=centers)
-    return new_labels, center
+cv2.imwrite('Otsu.png', th2)
 
+# Compare adaptiveThreshold methods
+#img = cv2.medianBlur(img,5)
+#ret,th1 = cv2.threshold(img,127,255,cv2.THRESH_BINARY)
+#th2 = cv2.adaptiveThreshold(img,255,cv2.ADAPTIVE_THRESH_MEAN_C,\
+            #cv2.THRESH_BINARY,11,2)
+#th3 = cv2.adaptiveThreshold(img,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,\
+            #cv2.THRESH_BINARY,11,2)
+#titles = ['Original Image', 'Global Thresholding (v = 127)',
+            #'Adaptive Mean Thresholding', 'Adaptive Gaussian Thresholding']
+#images = [img, th1, th2, th3]
 
-if __name__ == "__main__":
-    main()
+#plt.figure(1)
+#for i in range(4):
+    #plt.subplot(2,2,i+1),plt.imshow(images[i],'gray')
+    #plt.title(titles[i])
+    #plt.xticks([]),plt.yticks([])
+#plt.show()
